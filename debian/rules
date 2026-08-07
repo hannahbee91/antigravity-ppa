@@ -1,0 +1,27 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Source tarball is extracted during workflow preparation
+
+override_dh_auto_install:
+	# Create target installation directories
+	mkdir -p debian/antigravity-ide/opt/antigravity-ide
+	mkdir -p debian/antigravity-ide/usr/share/applications
+	mkdir -p debian/antigravity-ide/usr/share/pixmaps
+	mkdir -p debian/antigravity-ide/usr/share/icons/hicolor/256x256/apps
+	
+	# Copy binary contents
+	cp -r opt/antigravity-ide/* debian/antigravity-ide/opt/antigravity-ide/
+	
+	# Install desktop menu entry
+	cp debian/antigravity.desktop debian/antigravity-ide/usr/share/applications/antigravity.desktop
+
+	# Install application icons from repository
+	cp debian/antigravity.png debian/antigravity-ide/usr/share/pixmaps/antigravity.png
+	cp debian/antigravity.png debian/antigravity-ide/usr/share/icons/hicolor/256x256/apps/antigravity.png
+
+override_dh_shlibdeps:
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info

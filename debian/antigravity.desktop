@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Antigravity IDE
+Comment=Agent-First Integrated Development Environment
+Exec=/opt/antigravity-ide/antigravity %U
+Icon=antigravity
+Type=Application
+StartupNotify=true
+Categories=Development;IDE;
+MimeType=x-scheme-handler/antigravity;

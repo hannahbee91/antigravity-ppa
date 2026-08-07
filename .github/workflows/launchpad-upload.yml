@@ -1,0 +1,129 @@
+name: Build and Push Source Package to Launchpad PPA
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Daily at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  launchpad-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Packaging Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debhelper devscripts dput gpg curl python3-bs4
+
+      - name: Import GPG Key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Resolve Download URL and Prepare Workspace
+        run: |
+          # Fetch download page HTML
+          DOWNLOAD_PAGE=$(curl -sSL "https://antigravity.google/download")
+          
+          # Extract target Linux x64 IDE download URL
+          DOWNLOAD_URL=$(python3 -c "
+          import sys, re
+          from bs4 import BeautifulSoup
+
+          html = '''$DOWNLOAD_PAGE'''
+          soup = BeautifulSoup(html, 'html.parser')
+
+          url = None
+
+          # Strategy 1: Locate the specific 'Antigravity IDE' container and pull its Linux x64 link
+          for element in soup.find_all(['div', 'section', 'article', 'tr']):
+              header_text = element.get_text()
+              if 'Antigravity IDE' in header_text and 'CLI' not in header_text and 'SDK' not in header_text:
+                  for a in element.find_all('a', href=True):
+                      href = a['href']
+                      a_text = a.get_text().lower()
+                      href_lower = href.lower()
+                      if 'tar.gz' in href_lower and 'linux-x64' in href_lower:
+                          url = href
+                          break
+                      if 'tar.gz' in href_lower and 'x64' in a_text and 'arm64' not in a_text:
+                          url = href
+                          break
+              if url:
+                  break
+
+          # Strategy 2: Targeted Regex for CDN URLs containing 'linux-x64' AND 'IDE' in the filename/path
+          if not url:
+              # Matches URLs containing /linux-x64/ and 'IDE' or 'Antigravity%20IDE' in the filename
+              pattern = r'https://[^\s\"\'<>]+/linux-x64/[^\s\"\'<>]*IDE[^\s\"\'<>]*\.tar\.gz'
+              matches = re.findall(pattern, html, re.IGNORECASE)
+              if matches:
+                  url = matches[0]
+
+          # Strategy 3: Global fallback targeting linux-x64 tarballs with 'ide', excluding arm64/cli/sdk
+          if not url:
+              tarballs = re.findall(r'https://[^\s\"\'<>]+\.tar\.gz', html, re.IGNORECASE)
+              for t in tarballs:
+                  t_lower = t.lower()
+                  if 'linux-x64' in t_lower and 'ide' in t_lower and 'arm64' not in t_lower and 'cli' not in t_lower and 'sdk' not in t_lower:
+                      url = t
+                      break
+
+          print(url or '')
+          ")
+
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "Error: Failed to isolate the Linux x64 Antigravity IDE download URL."
+            exit 1
+          fi
+
+          echo "Isolated Linux x64 IDE URL: $DOWNLOAD_URL"
+
+          VERSION=$(date +'%Y.%m.%d')
+          TARGET_DIST="noble" # Target Ubuntu release codename
+          
+          # Generate Debian Changelog
+          mkdir -p debian
+          cat <<EOF > debian/changelog
+          antigravity-ide (${VERSION}-0ubuntu1~ppa1) ${TARGET_DIST}; urgency=low
+
+            * Automated release build fetched from antigravity.google/download.
+
+           -- Hannah Brown <hannah@hannahis.gay>  $(date -R)
+          EOF
+
+          # Download and unpack target archive
+          curl -sSL "$DOWNLOAD_URL" -o antigravity.tar.gz
+          mkdir -p opt/antigravity-ide
+          tar -xzf antigravity.tar.gz -C opt/antigravity-ide --strip-components=1
+
+      - name: Build and Sign Source Package
+        env:
+          GPG_KEY_ID: ${{ secrets.LAUNCHPAD_GPG_KEY_ID }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+        run: |
+          PASSPHRASE_ARG=""
+          if [ -n "$GPG_PASSPHRASE" ]; then
+            PASSPHRASE_ARG="--pinentry-mode loopback --passphrase $GPG_PASSPHRASE"
+          fi
+
+          dpkg-buildpackage -S -sa -k"$GPG_KEY_ID" signcommand="gpg $PASSPHRASE_ARG"
+
+      - name: Upload Package to Launchpad PPA
+        env:
+          LP_USER: ${{ secrets.LAUNCHPAD_USER }}
+          LP_PPA: ${{ secrets.LAUNCHPAD_PPA }}
+        run: |
+          cat <<EOF > ~/.dput.cf
+          [custom-ppa]
+          fqdn = ppa.launchpad.net
+          method = ftp
+          incoming = ~${LP_USER}/${LP_PPA}/ubuntu/
+          login = anonymous
+          allow_unsigned_uploads = 0
+          EOF
+
+          dput -f custom-ppa ../antigravity-ide_*_source.changes

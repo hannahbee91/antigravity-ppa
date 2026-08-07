@@ -8,6 +8,6 @@ Homepage: https://antigravity.google.com
 
 Package: antigravity-ide
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, libgtk-3-0, libnss3, libx11-xcb1
+Depends: ${misc:Depends}, libgtk-3-0, libnss3, libx11-xcb1
 Description: Google Antigravity Agentic IDE
  Agent-first development platform for autonomous AI workflows.

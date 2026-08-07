@@ -4,24 +4,36 @@
 	dh $@
 
 override_dh_auto_build:
-	# Source tarball is extracted during workflow preparation
+	# Source tarball is extracted dynamically during the GitHub Action
 
 override_dh_auto_install:
-	# Create target installation directories
+	# Prepare target filesystem hierarchy
 	mkdir -p debian/antigravity-ide/opt/antigravity-ide
 	mkdir -p debian/antigravity-ide/usr/share/applications
 	mkdir -p debian/antigravity-ide/usr/share/pixmaps
 	mkdir -p debian/antigravity-ide/usr/share/icons/hicolor/256x256/apps
 	
-	# Copy binary contents
-	cp -r opt/antigravity-ide/* debian/antigravity-ide/opt/antigravity-ide/
+	# Copy all binary contents safely (including hidden files)
+	cp -a opt/antigravity-ide/. debian/antigravity-ide/opt/antigravity-ide/
 	
-	# Install desktop menu entry
+	# Install desktop entry and icons
 	cp debian/antigravity.desktop debian/antigravity-ide/usr/share/applications/antigravity.desktop
-
-	# Install application icons from repository
 	cp debian/antigravity.png debian/antigravity-ide/usr/share/pixmaps/antigravity.png
 	cp debian/antigravity.png debian/antigravity-ide/usr/share/icons/hicolor/256x256/apps/antigravity.png
 
 override_dh_shlibdeps:
-	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
+	# Disable automatic shared library resolution; dependencies are hardcoded in debian/control
+
+override_dh_strip:
+	# Prevent debhelper from corrupting pre-compiled binaries by stripping them
+
+override_dh_dwz:
+	# Prevent DWARF debug compression on proprietary binaries
+
+override_dh_fixperms:
+	dh_fixperms
+	# Ensure the Chromium sandbox executable retains the required root SUID bit 
+	# (dh_fixperms strips this by default, which breaks app launch)
+	if [ -f debian/antigravity-ide/opt/antigravity-ide/chrome-sandbox ]; then \
+		chmod 4755 debian/antigravity-ide/opt/antigravity-ide/chrome-sandbox; \
+	fi

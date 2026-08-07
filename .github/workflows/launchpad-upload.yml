@@ -25,54 +25,63 @@ jobs:
 
       - name: Resolve Download URL and Prepare Workspace
         run: |
-          # Fetch and parse the direct x64 Linux Antigravity IDE tarball link
+          # Semantically parse the download page to locate the redirect endpoint
           DOWNLOAD_URL=$(python3 -c "
-          import urllib.request, re, html, sys
+          import urllib.request, sys
+          from bs4 import BeautifulSoup
+          from urllib.parse import urljoin
 
-          url = None
-          try:
-              req = urllib.request.Request(
-                  'https://antigravity.google/download', 
-                  headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'}
-              )
-              with urllib.request.urlopen(req) as resp:
-                  raw_content = resp.read().decode('utf-8', errors='ignore')
+          def get_download_url():
+              try:
+                  # Fetch primary download page
+                  req = urllib.request.Request('https://antigravity.google/download', headers={'User-Agent': 'Mozilla/5.0'})
+                  html = urllib.request.urlopen(req).read().decode('utf-8', errors='ignore')
+                  soup = BeautifulSoup(html, 'html.parser')
 
-              # 1. Unescape JSON escaped slashes using raw strings (fixes Python 3.12 warning)
-              content = raw_content.replace(r'\/', '/')
-              content = html.unescape(content)
+                  for a in soup.find_all('a', href=True):
+                      text = a.get_text(strip=True).lower()
+                      href = a['href'].lower()
+                      
+                      # Look for x64 links, avoiding ARM64
+                      if 'x64' in text or 'x64' in href:
+                          if 'arm' in text or 'arm' in href:
+                              continue
+                          
+                          # Traverse parent containers to confirm we are in the Linux IDE section
+                          depth = 0
+                          for p in a.parents:
+                              # Stop bubbling up before hitting global page wrappers
+                              if depth > 5 or p.name in ['body', 'html', 'main', 'nav', 'header']:
+                                  break
+                                  
+                              p_text = p.get_text(strip=True).lower()
+                              if 'linux' in p_text and 'ide' in p_text:
+                                  if 'cli' not in p_text and 'sdk' not in p_text:
+                                      return urljoin('https://antigravity.google/', a['href'])
+                              depth += 1
 
-              # 2. Extract tarball URLs allowing spaces and encoded characters
-              pattern = r'https?://[^\n\r\"\'<>{}()\[\]]+\.(?:tar\.gz|tgz)'
-              matches = re.findall(pattern, content, re.IGNORECASE)
-
-              candidates = []
-              for m in matches:
-                  # Clean trailing punctuation and encode raw spaces to %20
-                  m_clean = m.rstrip('.,;:').replace(' ', '%20')
-                  t_lower = m_clean.lower()
+                  # Fallback: Check the /releases page explicitly
+                  req2 = urllib.request.Request('https://antigravity.google/releases', headers={'User-Agent': 'Mozilla/5.0'})
+                  html2 = urllib.request.urlopen(req2).read().decode('utf-8', errors='ignore')
+                  soup2 = BeautifulSoup(html2, 'html.parser')
                   
-                  is_linux_x64 = ('linux-x64' in t_lower) or ('linux' in t_lower and 'x64' in t_lower)
-                  is_excluded = any(x in t_lower for x in ['arm64', 'cli', 'sdk'])
-                  
-                  if is_linux_x64 and not is_excluded:
-                      candidates.append(m_clean)
+                  for a in soup2.find_all('a', href=True):
+                      text = a.get_text(strip=True).lower()
+                      if 'linux' in text and 'x64' in text and 'arm' not in text:
+                          depth = 0
+                          for p in a.parents:
+                              if depth > 5 or p.name in ['body', 'html', 'main']:
+                                  break
+                              if 'ide' in p.get_text(strip=True).lower():
+                                  return urljoin('https://antigravity.google/', a['href'])
+                              depth += 1
 
-              if candidates:
-                  # Prioritize candidate URLs referencing 'ide' or 'antigravity'
-                  ide_matches = [c for c in candidates if 'ide' in c.lower() or 'antigravity' in c.lower()]
-                  url = ide_matches[0] if ide_matches else candidates[0]
-              else:
-                  # Output debug information to GitHub Actions log if no candidate matches
-                  sys.stderr.write('DEBUG: No candidates matched filters.\n')
-                  sys.stderr.write(f'DEBUG: Total raw tarball matches found: {len(matches)}\n')
-                  for idx, match in enumerate(matches[:10]):
-                      sys.stderr.write(f'  Match {idx}: {match}\n')
+              except Exception as e:
+                  sys.stderr.write(f'Scraper error: {e}\n')
+              
+              return ''
 
-          except Exception as err:
-              sys.stderr.write(f'Scraper encountered error: {err}\n')
-
-          print(url or '')
+          print(get_download_url())
           ")
 
           if [ -z "$DOWNLOAD_URL" ]; then
@@ -80,10 +89,10 @@ jobs:
             exit 1
           fi
 
-          echo "Isolated Linux x64 IDE URL: $DOWNLOAD_URL"
+          echo "Isolated Target URL: $DOWNLOAD_URL"
 
           VERSION=$(date +'%Y.%m.%d')
-          TARGET_DIST="noble" # Target Ubuntu release codename
+          TARGET_DIST="noble" # Ubuntu 26.04 LTS codename
 
           # Generate Debian Changelog
           mkdir -p debian

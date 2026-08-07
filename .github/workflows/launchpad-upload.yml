@@ -2,7 +2,7 @@ name: Build and Push Source Package to Launchpad PPA
 
 on:
   schedule:
-    - cron: '0 2 * * *' # Daily at 02:00 UTC
+    - cron: "0 2 * * *" # Daily at 02:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -25,52 +25,55 @@ jobs:
 
       - name: Resolve Download URL and Prepare Workspace
         run: |
-          # Fetch download page HTML
-          DOWNLOAD_PAGE=$(curl -sSL "https://antigravity.google/download")
-          
-          # Extract target Linux x64 IDE download URL
+          # Fetch download URL directly within Python using UTF-8 error suppression
           DOWNLOAD_URL=$(python3 -c "
-          import sys, re
+          import urllib.request, re
           from bs4 import BeautifulSoup
 
-          html = '''$DOWNLOAD_PAGE'''
-          soup = BeautifulSoup(html, 'html.parser')
-
           url = None
+          try:
+              req = urllib.request.Request(
+                  'https://antigravity.google/download', 
+                  headers={'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64)'}
+              )
+              with urllib.request.urlopen(req) as resp:
+                  html = resp.read().decode('utf-8', errors='ignore')
+                  soup = BeautifulSoup(html, 'html.parser')
 
-          # Strategy 1: Locate the specific 'Antigravity IDE' container and pull its Linux x64 link
-          for element in soup.find_all(['div', 'section', 'article', 'tr']):
-              header_text = element.get_text()
-              if 'Antigravity IDE' in header_text and 'CLI' not in header_text and 'SDK' not in header_text:
-                  for a in element.find_all('a', href=True):
-                      href = a['href']
-                      a_text = a.get_text().lower()
-                      href_lower = href.lower()
-                      if 'tar.gz' in href_lower and 'linux-x64' in href_lower:
-                          url = href
-                          break
-                      if 'tar.gz' in href_lower and 'x64' in a_text and 'arm64' not in a_text:
-                          url = href
-                          break
-              if url:
-                  break
-
-          # Strategy 2: Targeted Regex for CDN URLs containing 'linux-x64' AND 'IDE' in the filename/path
-          if not url:
-              # Matches URLs containing /linux-x64/ and 'IDE' or 'Antigravity%20IDE' in the filename
-              pattern = r'https://[^\s\"\'<>]+/linux-x64/[^\s\"\'<>]*IDE[^\s\"\'<>]*\.tar\.gz'
-              matches = re.findall(pattern, html, re.IGNORECASE)
-              if matches:
-                  url = matches[0]
-
-          # Strategy 3: Global fallback targeting linux-x64 tarballs with 'ide', excluding arm64/cli/sdk
-          if not url:
-              tarballs = re.findall(r'https://[^\s\"\'<>]+\.tar\.gz', html, re.IGNORECASE)
-              for t in tarballs:
-                  t_lower = t.lower()
-                  if 'linux-x64' in t_lower and 'ide' in t_lower and 'arm64' not in t_lower and 'cli' not in t_lower and 'sdk' not in t_lower:
-                      url = t
+              # Strategy 1: Find container for 'Antigravity IDE' and extract x64 tarball link
+              for element in soup.find_all(['div', 'section', 'article', 'tr']):
+                  header_text = element.get_text()
+                  if 'Antigravity IDE' in header_text and 'CLI' not in header_text and 'SDK' not in header_text:
+                      for a in element.find_all('a', href=True):
+                          href = a['href']
+                          a_text = a.get_text().lower()
+                          href_lower = href.lower()
+                          if 'tar.gz' in href_lower and 'linux-x64' in href_lower:
+                              url = href
+                              break
+                          if 'tar.gz' in href_lower and 'x64' in a_text and 'arm64' not in a_text:
+                              url = href
+                              break
+                  if url:
                       break
+
+              # Strategy 2: Targeted Regex for CDN URLs matching linux-x64 + IDE + tar.gz
+              if not url:
+                  pattern = r'https://[^\s\"\'<>]+/linux-x64/[^\s\"\'<>]*IDE[^\s\"\'<>]*\.tar\.gz'
+                  matches = re.findall(pattern, html, re.IGNORECASE)
+                  if matches:
+                      url = matches[0]
+
+              # Strategy 3: Global fallback targeting linux-x64 tarballs, excluding arm64/cli/sdk
+              if not url:
+                  tarballs = re.findall(r'https://[^\s\"\'<>]+\.tar\.gz', html, re.IGNORECASE)
+                  for t in tarballs:
+                      t_lower = t.lower()
+                      if 'linux-x64' in t_lower and 'ide' in t_lower and 'arm64' not in t_lower and 'cli' not in t_lower and 'sdk' not in t_lower:
+                          url = t
+                          break
+          except Exception:
+              pass
 
           print(url or '')
           ")
@@ -84,7 +87,7 @@ jobs:
 
           VERSION=$(date +'%Y.%m.%d')
           TARGET_DIST="noble" # Target Ubuntu release codename
-          
+
           # Generate Debian Changelog
           mkdir -p debian
           cat <<EOF > debian/changelog

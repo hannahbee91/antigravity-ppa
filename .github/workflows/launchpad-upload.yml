@@ -25,55 +25,47 @@ jobs:
 
       - name: Resolve Download URL and Prepare Workspace
         run: |
-          # Fetch download URL directly within Python using UTF-8 error suppression
+          # Fetch and parse the direct x64 Linux Antigravity IDE tarball link
           DOWNLOAD_URL=$(python3 -c "
-          import urllib.request, re
-          from bs4 import BeautifulSoup
+          import urllib.request, re, html, sys
 
           url = None
           try:
               req = urllib.request.Request(
                   'https://antigravity.google/download', 
-                  headers={'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64)'}
+                  headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'}
               )
               with urllib.request.urlopen(req) as resp:
-                  html = resp.read().decode('utf-8', errors='ignore')
-                  soup = BeautifulSoup(html, 'html.parser')
+                  raw_content = resp.read().decode('utf-8', errors='ignore')
 
-              # Strategy 1: Find container for 'Antigravity IDE' and extract x64 tarball link
-              for element in soup.find_all(['div', 'section', 'article', 'tr']):
-                  header_text = element.get_text()
-                  if 'Antigravity IDE' in header_text and 'CLI' not in header_text and 'SDK' not in header_text:
-                      for a in element.find_all('a', href=True):
-                          href = a['href']
-                          a_text = a.get_text().lower()
-                          href_lower = href.lower()
-                          if 'tar.gz' in href_lower and 'linux-x64' in href_lower:
-                              url = href
-                              break
-                          if 'tar.gz' in href_lower and 'x64' in a_text and 'arm64' not in a_text:
-                              url = href
-                              break
-                  if url:
-                      break
+              # 1. Unescape JSON/JS escaped slashes and HTML entities
+              content = raw_content.replace('\\/', '/')
+              content = html.unescape(content)
 
-              # Strategy 2: Targeted Regex for CDN URLs matching linux-x64 + IDE + tar.gz
-              if not url:
-                  pattern = r'https://[^\s\"\'<>]+/linux-x64/[^\s\"\'<>]*IDE[^\s\"\'<>]*\.tar\.gz'
-                  matches = re.findall(pattern, html, re.IGNORECASE)
-                  if matches:
-                      url = matches[0]
+              # 2. Extract all tarball URLs from the page source (including scripts and JSON)
+              tarball_urls = re.findall(
+                  r'https?://[^\s\"\'<>{}()\[\]]+?\.(?:tar\.gz|tgz)', 
+                  content, 
+                  re.IGNORECASE
+              )
 
-              # Strategy 3: Global fallback targeting linux-x64 tarballs, excluding arm64/cli/sdk
-              if not url:
-                  tarballs = re.findall(r'https://[^\s\"\'<>]+\.tar\.gz', html, re.IGNORECASE)
-                  for t in tarballs:
-                      t_lower = t.lower()
-                      if 'linux-x64' in t_lower and 'ide' in t_lower and 'arm64' not in t_lower and 'cli' not in t_lower and 'sdk' not in t_lower:
-                          url = t
-                          break
-          except Exception:
-              pass
+              # 3. Filter for Linux x64 IDE tarball while excluding ARM64, CLI, and SDK
+              candidates = []
+              for target in tarball_urls:
+                  t_lower = target.lower()
+                  is_linux_x64 = 'linux-x64' in t_lower or ('linux' in t_lower and 'x64' in t_lower)
+                  is_excluded = any(x in t_lower for x in ['arm64', 'cli', 'sdk'])
+                  
+                  if is_linux_x64 and not is_excluded:
+                      candidates.append(target)
+
+              if candidates:
+                  # Prioritize candidate URLs explicitly referencing 'ide' or 'antigravity'
+                  ide_matches = [c for c in candidates if 'ide' in c.lower() or 'antigravity' in c.lower()]
+                  url = ide_matches[0] if ide_matches else candidates[0]
+
+          except Exception as err:
+              sys.stderr.write(f'Scraper encountered error: {err}\n')
 
           print(url or '')
           ")

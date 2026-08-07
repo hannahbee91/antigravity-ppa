@@ -38,31 +38,36 @@ jobs:
               with urllib.request.urlopen(req) as resp:
                   raw_content = resp.read().decode('utf-8', errors='ignore')
 
-              # 1. Unescape JSON/JS escaped slashes and HTML entities
-              content = raw_content.replace('\\/', '/')
+              # 1. Unescape JSON escaped slashes using raw strings (fixes Python 3.12 warning)
+              content = raw_content.replace(r'\/', '/')
               content = html.unescape(content)
 
-              # 2. Extract all tarball URLs from the page source (including scripts and JSON)
-              tarball_urls = re.findall(
-                  r'https?://[^\s\"\'<>{}()\[\]]+?\.(?:tar\.gz|tgz)', 
-                  content, 
-                  re.IGNORECASE
-              )
+              # 2. Extract tarball URLs allowing spaces and encoded characters
+              pattern = r'https?://[^\n\r\"\'<>{}()\[\]]+\.(?:tar\.gz|tgz)'
+              matches = re.findall(pattern, content, re.IGNORECASE)
 
-              # 3. Filter for Linux x64 IDE tarball while excluding ARM64, CLI, and SDK
               candidates = []
-              for target in tarball_urls:
-                  t_lower = target.lower()
-                  is_linux_x64 = 'linux-x64' in t_lower or ('linux' in t_lower and 'x64' in t_lower)
+              for m in matches:
+                  # Clean trailing punctuation and encode raw spaces to %20
+                  m_clean = m.rstrip('.,;:').replace(' ', '%20')
+                  t_lower = m_clean.lower()
+                  
+                  is_linux_x64 = ('linux-x64' in t_lower) or ('linux' in t_lower and 'x64' in t_lower)
                   is_excluded = any(x in t_lower for x in ['arm64', 'cli', 'sdk'])
                   
                   if is_linux_x64 and not is_excluded:
-                      candidates.append(target)
+                      candidates.append(m_clean)
 
               if candidates:
-                  # Prioritize candidate URLs explicitly referencing 'ide' or 'antigravity'
+                  # Prioritize candidate URLs referencing 'ide' or 'antigravity'
                   ide_matches = [c for c in candidates if 'ide' in c.lower() or 'antigravity' in c.lower()]
                   url = ide_matches[0] if ide_matches else candidates[0]
+              else:
+                  # Output debug information to GitHub Actions log if no candidate matches
+                  sys.stderr.write('DEBUG: No candidates matched filters.\n')
+                  sys.stderr.write(f'DEBUG: Total raw tarball matches found: {len(matches)}\n')
+                  for idx, match in enumerate(matches[:10]):
+                      sys.stderr.write(f'  Match {idx}: {match}\n')
 
           except Exception as err:
               sys.stderr.write(f'Scraper encountered error: {err}\n')

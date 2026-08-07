@@ -112,12 +112,20 @@ jobs:
           GPG_KEY_ID: ${{ secrets.LAUNCHPAD_GPG_KEY_ID }}
           GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
         run: |
-          PASSPHRASE_ARG=""
+          # Create a secure wrapper script for GPG to handle the passphrase dynamically
+          # This prevents argument-splitting issues inside dpkg-buildpackage
+          cat << 'EOF' > sign-wrapper.sh
+          #!/bin/bash
           if [ -n "$GPG_PASSPHRASE" ]; then
-            PASSPHRASE_ARG="--pinentry-mode loopback --passphrase $GPG_PASSPHRASE"
+            gpg --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" "$@"
+          else
+            gpg "$@"
           fi
+          EOF
+          chmod +x sign-wrapper.sh
 
-          dpkg-buildpackage -S -sa -k"$GPG_KEY_ID" signcommand="gpg $PASSPHRASE_ARG"
+          # Run the build using the wrapper script for signing
+          dpkg-buildpackage -S -sa -k"$GPG_KEY_ID" --sign-command="$(pwd)/sign-wrapper.sh"
 
       - name: Upload Package to Launchpad PPA
         env:

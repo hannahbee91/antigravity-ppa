@@ -25,74 +25,72 @@ jobs:
 
       - name: Resolve Download URL and Prepare Workspace
         run: |
-          # Semantically parse the download page to locate the redirect endpoint
+          # 1. Use the pre-installed Headless Chrome to fully render the client-side JavaScript 
+          # and dump the final DOM into a file.
+          google-chrome-stable --headless=new --dump-dom "https://antigravity.google/download" > rendered_page.html
+
+          # 2. Parse the fully-rendered DOM
           DOWNLOAD_URL=$(python3 -c "
-          import urllib.request, sys
+          import urllib.parse, sys, re
           from bs4 import BeautifulSoup
-          from urllib.parse import urljoin
 
-          def get_download_url():
-              try:
-                  # Fetch primary download page
-                  req = urllib.request.Request('https://antigravity.google/download', headers={'User-Agent': 'Mozilla/5.0'})
-                  html = urllib.request.urlopen(req).read().decode('utf-8', errors='ignore')
-                  soup = BeautifulSoup(html, 'html.parser')
+          url = None
+          try:
+              with open('rendered_page.html', 'r', encoding='utf-8') as f:
+                  html = f.read()
 
+              soup = BeautifulSoup(html, 'html.parser')
+
+              # Strategy A: Check all <a> tags for direct hrefs pointing to the Linux x64 IDE
+              for a in soup.find_all('a', href=True):
+                  href = a['href']
+                  href_lower = href.lower()
+                  
+                  if 'linux-x64' in href_lower and 'ide' in href_lower and 'arm' not in href_lower:
+                      url = urllib.parse.urljoin('https://antigravity.google/', href)
+                      break
+
+              # Strategy B: Find visual buttons labeled 'x64' under the 'Linux' & 'IDE' sections
+              if not url:
                   for a in soup.find_all('a', href=True):
                       text = a.get_text(strip=True).lower()
-                      href = a['href'].lower()
-                      
-                      # Look for x64 links, avoiding ARM64
-                      if 'x64' in text or 'x64' in href:
-                          if 'arm' in text or 'arm' in href:
-                              continue
-                          
-                          # Traverse parent containers to confirm we are in the Linux IDE section
-                          depth = 0
-                          for p in a.parents:
-                              # Stop bubbling up before hitting global page wrappers
-                              if depth > 5 or p.name in ['body', 'html', 'main', 'nav', 'header']:
-                                  break
-                                  
-                              p_text = p.get_text(strip=True).lower()
-                              if 'linux' in p_text and 'ide' in p_text:
-                                  if 'cli' not in p_text and 'sdk' not in p_text:
-                                      return urljoin('https://antigravity.google/', a['href'])
-                              depth += 1
+                      if 'x64' in text and 'arm' not in text:
+                          parents_text = ' '.join(p.get_text(strip=True).lower() for p in a.parents if p.name not in ['body', 'html', 'main'])
+                          if 'linux' in parents_text and 'ide' in parents_text and 'cli' not in parents_text and 'sdk' not in parents_text:
+                              url = urllib.parse.urljoin('https://antigravity.google/', a['href'])
+                              break
 
-                  # Fallback: Check the /releases page explicitly
-                  req2 = urllib.request.Request('https://antigravity.google/releases', headers={'User-Agent': 'Mozilla/5.0'})
-                  html2 = urllib.request.urlopen(req2).read().decode('utf-8', errors='ignore')
-                  soup2 = BeautifulSoup(html2, 'html.parser')
-                  
-                  for a in soup2.find_all('a', href=True):
-                      text = a.get_text(strip=True).lower()
-                      if 'linux' in text and 'x64' in text and 'arm' not in text:
-                          depth = 0
-                          for p in a.parents:
-                              if depth > 5 or p.name in ['body', 'html', 'main']:
-                                  break
-                              if 'ide' in p.get_text(strip=True).lower():
-                                  return urljoin('https://antigravity.google/', a['href'])
-                              depth += 1
+              # Strategy C: Brute-force regex for hidden JS variables or state endpoints
+              if not url:
+                  matches = re.findall(r'https?://[^\s\"\'<>{}()\[\]]+\.tar\.gz', html, re.IGNORECASE)
+                  for m in matches:
+                      m_clean = m.replace(' ', '%20') # Encode literal spaces safely
+                      m_lower = m_clean.lower()
+                      if 'linux-x64' in m_lower and 'ide' in m_lower and 'arm' not in m_lower:
+                          url = m_clean
+                          break
 
-              except Exception as e:
-                  sys.stderr.write(f'Scraper error: {e}\n')
+              if url:
+                  # Guarantee that any spaces or special chars in the filename are URL-encoded for curl
+                  url = urllib.parse.quote(url, safe=':/%?&=')
+                  print(url)
               
-              return ''
-
-          print(get_download_url())
+          except Exception as e:
+              sys.stderr.write(f'Scraper error: {e}\n')
           ")
 
           if [ -z "$DOWNLOAD_URL" ]; then
             echo "Error: Failed to isolate the Linux x64 Antigravity IDE download URL."
+            echo "--- DEBUG START: DUMPING RENDERED HTML ---"
+            cat rendered_page.html
+            echo "--- DEBUG END ---"
             exit 1
           fi
 
           echo "Isolated Target URL: $DOWNLOAD_URL"
 
           VERSION=$(date +'%Y.%m.%d')
-          TARGET_DIST="noble" # Ubuntu 26.04 LTS codename
+          TARGET_DIST="resolute" # Ubuntu 26.04 LTS codename
 
           # Generate Debian Changelog
           mkdir -p debian
@@ -104,7 +102,7 @@ jobs:
            -- Hannah Brown <hannah@hannahis.gay>  $(date -R)
           EOF
 
-          # Download and unpack target archive
+          # Download and unpack target archive (-L explicitly follows any 302 API redirects)
           curl -sSL "$DOWNLOAD_URL" -o antigravity.tar.gz
           mkdir -p opt/antigravity-ide
           tar -xzf antigravity.tar.gz -C opt/antigravity-ide --strip-components=1

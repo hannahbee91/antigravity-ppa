@@ -21,6 +21,9 @@ override_dh_auto_install:
 	cp debian/antigravity.png debian/antigravity-ide/usr/share/pixmaps/antigravity.png
 	cp debian/antigravity.png debian/antigravity-ide/usr/share/icons/hicolor/256x256/apps/antigravity.png
 
+	# Restore all .so files (renamed in launchpad-upload.yml to bypass dpkg-source exclusions)
+	find debian/antigravity-ide/opt/antigravity-ide -type f -name "*.so.ppa-keep" -exec sh -c 'mv "$1" "${1%.ppa-keep}"' _ {} \;
+
 override_dh_shlibdeps:
 	# Disable automatic shared library resolution; dependencies are hardcoded in debian/control
 

@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Antigravity IDE
 Comment=Agent-First Integrated Development Environment
-Exec=/opt/antigravity-ide/antigravity %U
+Exec=/opt/antigravity-ide/antigravity-ide %U
 Icon=antigravity
 Type=Application
 StartupNotify=true

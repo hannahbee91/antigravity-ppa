@@ -107,6 +107,9 @@ jobs:
           mkdir -p opt/antigravity-ide
           tar -xzf antigravity.tar.gz -C opt/antigravity-ide --strip-components=1
 
+          # Rename all .so files to bypass dpkg-source exclusion of *.so files in native packages
+          find opt/antigravity-ide -type f -name "*.so" -exec mv {} {}.ppa-keep \;
+
       - name: Build and Sign Source Package
         env:
           GPG_KEY_ID: ${{ secrets.LAUNCHPAD_GPG_KEY_ID }}
